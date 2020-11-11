@@ -1,0 +1,17 @@
+{
+  "name": "yoast/cloudflare-tag-purge",
+  "type": "wordpress-plugin",
+  "homepage": "https://yoast.com",
+  "license": "GPL-3.0-or-later",
+  "authors": [
+    {
+      "name": "Team Yoast",
+      "email": "support@yoast.com",
+      "homepage": "https://yoast.com"
+    }
+  ],
+  "require": {
+    "php": ">=7.2",
+    "composer/installers": "^1.9.0"
+  }
+}
