@@ -4,17 +4,17 @@
  * Plugin URI: https://wordpress.org/plugins/cloudflare-yoast/
  * Description: Enables you to purge the cache by tags in Cloudflare (enterprise accounts only).
  * Author: Team Yoast
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author URI: https://wordpress.org/
  * Text Domain: cloudflare-tag-purge
  */
 
 
-define('cloudflare_tag_purge_version', '1.0.0');
+define('cloudflare_tag_purge_version', '1.0.1');
 
-if (is_admin()) {
-    add_action('init', 'yoast_cloudflare_admin_init');
-} else {
+add_action('init', 'yoast_cloudflare_admin_init');
+
+if (!is_admin()) {
     add_filter('body_class', 'yoast_cache_prefix_body_class', 40, 1);
 }
 
@@ -23,43 +23,54 @@ if (is_admin()) {
  */
 function yoast_cloudflare_admin_init()
 {
-    if (\class_exists('CF\WordPress\DataStore') === false) {
-        return;
-    }
-
-    // Cloudflare plugin activated
-    add_filter('cloudflare_purge_by_url', 'yoast_cloudflare_purge_action', 10, 2);
+    add_action('save_post', 'yoast_cloudflare_purge_action_save_post', 10, 3);
+    add_action('edit_post', 'yoast_cloudflare_purge_action_edit_post', 10, 3);
 }
 
+/**
+ * @param int $post_id
+ * @param $post
+ * @param $update
+ * @return mixed
+ */
+function yoast_cloudflare_purge_action_save_post(int $post_id, $post, $update)
+{
+    execute_yoast_tag_purge($post_id);
+}
 
 /**
- * @param array $urls List of the URLs to be purged
- * @param int $post_id The Post ID of the requested purge action
- * @return array
+ * @param int $post_id
+ * @param $post
+ * @param $update
+ * @return mixed
  */
-function yoast_cloudflare_purge_action(array $urls, int $post_id)
+function yoast_cloudflare_purge_action_edit_post(int $post_id, $post)
 {
-    if (\class_exists('CF\WordPress\DataStore') === false) {
-        return $urls;
-    }
+    execute_yoast_tag_purge($post_id);
+}
 
+/**
+ * @param int $post_id
+ */
+function execute_yoast_tag_purge(int $post_id)
+{
     $auth_key = read_yoast_environment_setting('CF_KEY', null);
 
     if (empty($auth_key)) {
-        return $urls;
+        return;
     }
 
     $tags = get_yoast_cache_tags_by_post_id((int)$post_id);
 
     if (\count($tags) === 0) {
-        return $urls;
+        return;
     }
 
     $mail = read_yoast_environment_setting('CF_EMAIL', null);
     $zone_id = read_yoast_environment_setting('CF_ZONE_ID', null);
 
     if (empty($mail) || empty($auth_key) || empty($zone_id)) {
-        return false;
+        return;
     }
 
     $loops = \ceil(\count($tags) / 30); // a maximum of 30 tags per API call
@@ -76,14 +87,12 @@ function yoast_cloudflare_purge_action(array $urls, int $post_id)
                     'X-Auth-Key' => $auth_key,
                     'Content-Type' => 'application/json',
                 ],
-                'body' => [
+                'body' => \wp_json_encode([
                     'tags' => \array_values($api_tags),
-                ],
+                ]),
             ]
         );
     }
-
-    return $urls;
 }
 
 
