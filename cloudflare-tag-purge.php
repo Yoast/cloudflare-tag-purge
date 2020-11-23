@@ -4,18 +4,21 @@
  * Plugin URI: https://wordpress.org/plugins/cloudflare-yoast/
  * Description: Enables you to purge the cache by tags in Cloudflare (enterprise accounts only).
  * Author: Team Yoast
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author URI: https://wordpress.org/
  * Text Domain: cloudflare-tag-purge
  */
 
-
-define('cloudflare_tag_purge_version', '1.0.2');
-
-add_action('init', 'yoast_cloudflare_admin_init');
+define('cloudflare_tag_purge_version', '1.0.3');
+define('YOAST_CLOUDFLARE_LOG_STATUS_INFO', 'info');
+define('YOAST_CLOUDFLARE_LOG_STATUS_PURGE', 'purge');
 
 if (!is_admin()) {
     add_filter('body_class', 'yoast_cache_prefix_body_class', 40, 1);
+}
+
+if (is_admin() || wp_is_json_request()) {
+    add_action('init', 'yoast_cloudflare_admin_init');
 }
 
 /**
@@ -23,7 +26,7 @@ if (!is_admin()) {
  */
 function yoast_cloudflare_admin_init()
 {
-    add_action('save_post', 'yoast_cloudflare_purge_action_save_post', 10, 3);
+//    add_action('save_post', 'yoast_cloudflare_purge_action_save_post', 10, 3);
     add_action('edit_post', 'yoast_cloudflare_purge_action_edit_post', 10, 3);
 }
 
@@ -57,12 +60,16 @@ function execute_yoast_tag_purge($post_id)
     $auth_key = read_yoast_environment_setting('CF_KEY', null);
 
     if (empty($auth_key)) {
+        yoast_cache_tag_log(YOAST_CLOUDFLARE_LOG_STATUS_INFO, ['purge' => false, 'info' => 'No CloudFlare key available']);
+
         return;
     }
 
     $tags = get_yoast_cache_tags_by_post_id((int)$post_id);
 
     if (count($tags) === 0) {
+        yoast_cache_tag_log(YOAST_CLOUDFLARE_LOG_STATUS_INFO, ['purge' => false, 'info' => 'No tags found for post #' . $post_id, 'post_id' => $post_id]);
+
         return;
     }
 
@@ -70,12 +77,16 @@ function execute_yoast_tag_purge($post_id)
     $zone_id = read_yoast_environment_setting('CF_ZONE_ID', null);
 
     if (empty($mail) || empty($auth_key) || empty($zone_id)) {
+        yoast_cache_tag_log(YOAST_CLOUDFLARE_LOG_STATUS_INFO, ['purge' => false, 'info' => 'No CloudFlare email and zone id available']);
+
         return;
     }
 
     $loops = ceil(count($tags) / 30); // a maximum of 30 tags per API call
     for ($i = 0; $i <= $loops; $i++) {
         $api_tags = array_splice($tags, ($i * 30), 30);
+
+        yoast_cache_tag_log(YOAST_CLOUDFLARE_LOG_STATUS_PURGE, ['purge' => true, 'tags' => $api_tags, 'zone_id' => $zone_id]);
 
         wp_remote_post(
             'https://api.cloudflare.com/client/v4/zones/' . $zone_id . '/purge_cache',
@@ -174,4 +185,31 @@ function get_yoast_cache_prefix()
     $prefix = str_replace('.', '-', $prefix);
 
     return trim(strtolower($prefix)) . '-';
+}
+
+/**
+ * @param string $level
+ * @param array $data
+ */
+function yoast_cache_tag_log(string $level, array $data)
+{
+    $log_location = read_yoast_environment_setting('CF_LOG_PATH', null);
+    if ($log_location === null) {
+        error_log('Cloudflare log file path not configured (CF_LOG_PATH)');
+        return;
+    }
+
+    $data['level'] = $level;
+    $data['server'] = $_SERVER['SERVER_NAME'];
+    $data['site'] = read_yoast_environment_setting('DOMAIN_CURRENT_SITE', 'staging-local.yoast.com');
+    $data['created'] = \date('Y-m-d H:i:s');
+
+    $file_stream = @fopen($log_location, 'a');
+    @fwrite($file_stream, \json_encode($data) . "\n");
+    @fclose($file_stream);
+
+    if (!is_writable($log_location)) {
+        error_log('Cloudflare log file path not writable: ' . $log_location);
+        return;
+    }
 }
