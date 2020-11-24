@@ -4,12 +4,12 @@
  * Plugin URI: https://wordpress.org/plugins/cloudflare-yoast/
  * Description: Enables you to purge the cache by tags in Cloudflare (enterprise accounts only).
  * Author: Team Yoast
- * Version: 1.0.3
+ * Version: 1.0.4
  * Author URI: https://wordpress.org/
  * Text Domain: cloudflare-tag-purge
  */
 
-define('cloudflare_tag_purge_version', '1.0.3');
+define('cloudflare_tag_purge_version', '1.0.4');
 define('YOAST_CLOUDFLARE_LOG_STATUS_INFO', 'info');
 define('YOAST_CLOUDFLARE_LOG_STATUS_PURGE', 'purge');
 
@@ -85,6 +85,10 @@ function execute_yoast_tag_purge($post_id)
     $loops = ceil(count($tags) / 30); // a maximum of 30 tags per API call
     for ($i = 0; $i <= $loops; $i++) {
         $api_tags = array_splice($tags, ($i * 30), 30);
+
+        if( \count($api_tags) === 0 ) {
+            continue;
+        }
 
         yoast_cache_tag_log(YOAST_CLOUDFLARE_LOG_STATUS_PURGE, ['purge' => true, 'tags' => $api_tags, 'zone_id' => $zone_id]);
 
