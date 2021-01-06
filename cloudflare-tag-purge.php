@@ -4,12 +4,12 @@
  * Plugin URI: https://wordpress.org/plugins/cloudflare-yoast/
  * Description: Enables you to purge the cache by tags in Cloudflare (enterprise accounts only).
  * Author: Team Yoast
- * Version: 1.0.4
+ * Version: 1.0.6
  * Author URI: https://wordpress.org/
  * Text Domain: cloudflare-tag-purge
  */
 
-define('cloudflare_tag_purge_version', '1.0.4');
+define('cloudflare_tag_purge_version', '1.0.6');
 define('YOAST_CLOUDFLARE_LOG_STATUS_INFO', 'info');
 define('YOAST_CLOUDFLARE_LOG_STATUS_PURGE', 'purge');
 
@@ -38,7 +38,7 @@ function yoast_cloudflare_admin_init()
  */
 function yoast_cloudflare_purge_action_save_post($post_id, $post, $update)
 {
-    execute_yoast_tag_purge($post_id);
+    execute_yoast_tag_purge((int)$post_id);
 }
 
 /**
@@ -49,13 +49,13 @@ function yoast_cloudflare_purge_action_save_post($post_id, $post, $update)
  */
 function yoast_cloudflare_purge_action_edit_post($post_id, $post)
 {
-    execute_yoast_tag_purge($post_id);
+    execute_yoast_tag_purge((int)$post_id);
 }
 
 /**
  * @param int $post_id
  */
-function execute_yoast_tag_purge($post_id)
+function execute_yoast_tag_purge(int $post_id)
 {
     $auth_key = read_yoast_environment_setting('CF_KEY', null);
 
@@ -86,7 +86,7 @@ function execute_yoast_tag_purge($post_id)
     for ($i = 0; $i <= $loops; $i++) {
         $api_tags = array_splice($tags, ($i * 30), 30);
 
-        if( \count($api_tags) === 0 ) {
+        if (\count($api_tags) === 0) {
             continue;
         }
 
@@ -108,6 +108,28 @@ function execute_yoast_tag_purge($post_id)
             ]
         );
     }
+
+    $sitemap_url = get_yoast_sitemap_url((int)$post_id);
+
+    if (!empty($sitemap_url)) {
+        yoast_cache_tag_log(YOAST_CLOUDFLARE_LOG_STATUS_PURGE, ['purge' => true, 'sitemap' => $sitemap_url, 'zone_id' => $zone_id]);
+
+        wp_remote_post(
+            'https://api.cloudflare.com/client/v4/zones/' . $zone_id . '/purge_cache',
+            [
+                'method' => 'POST',
+                'blocking' => false,
+                'headers' => [
+                    'X-Auth-Email' => $mail,
+                    'X-Auth-Key' => $auth_key,
+                    'Content-Type' => 'application/json',
+                ],
+                'body' => wp_json_encode([
+                    'files' => [$sitemap_url],
+                ]),
+            ]
+        );
+    }
 }
 
 
@@ -115,7 +137,7 @@ function execute_yoast_tag_purge($post_id)
  * @param int $post_id
  * @return array|string[]
  */
-function get_yoast_cache_tags_by_post_id($post_id)
+function get_yoast_cache_tags_by_post_id(int $post_id)
 {
     $tags = [get_yoast_cache_prefix() . 'postid-' . (int)$post_id];
     $post = get_post($post_id);
@@ -159,6 +181,24 @@ function yoast_cache_prefix_body_class($classes)
     }
 
     return array_merge($classes, $prefixedClasses);
+}
+
+/**
+ * Get the sitemap url, and flush by url
+ *
+ * @param int $post_id
+ * @return string
+ */
+function get_yoast_sitemap_url(int $post_id)
+{
+    $prefix = get_site_url() . '/';
+    $post_type = get_post_type($post_id);
+
+    if (empty($post_type)) {
+        return $prefix . 'sitemap_index.xml';
+    }
+
+    return $prefix . $post_type . '-sitemap.xml';
 }
 
 /**
