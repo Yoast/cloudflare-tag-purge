@@ -47,21 +47,39 @@ class Yoast_CloudFlare_Tag_Purge {
 		$this->auth_key = $this->read_environment_setting( 'CF_KEY', null );
 		$this->mail     = $this->read_environment_setting( 'CF_EMAIL', null );
 		$this->zone_id  = $this->read_environment_setting( 'CF_ZONE_ID', null );
+	}
 
-		if ( empty( $this->auth_key ) ) {
+	/**
+	 * Purge the cache for the updated/published post and all the pages it appears on.
+	 *
+	 * @return void
+	 */
+	public function execute_tag_purge(): void {
+		if ( ! $this->check_settings() ) {
+			return;
+		}
+
+		$this->get_cache_tags();
+
+		if ( count( $this->tags ) === 0 ) {
 			$this->log( YOAST_CLOUDFLARE_LOG_STATUS_INFO, [
-				'purge' => false,
-				'info'  => 'No CloudFlare key available.'
+				'purge'   => false,
+				'info'    => 'No tags found for post #' . $this->post->ID,
+				'post_id' => $this->post->ID
 			] );
 
 			return;
 		}
 
-		if ( empty( $this->mail ) || empty( $this->zone_id ) ) {
-			$this->log( YOAST_CLOUDFLARE_LOG_STATUS_INFO, [
-				'purge' => false,
-				'info'  => 'No CloudFlare email or zone ID available.'
-			] );
+		$loops = ceil( count( $this->tags ) / 30 ); // a maximum of 30 tags per API call
+		for ( $i = 0; $i <= $loops; $i ++ ) {
+			$api_tags = array_splice( $this->tags, ( $i * 30 ), 30 );
+
+			if ( \count( $api_tags ) === 0 ) {
+				continue;
+			}
+
+			$this->cloudflare_cache_clear( [ 'tags' => array_values( $api_tags ) ] );
 		}
 	}
 
@@ -175,36 +193,6 @@ class Yoast_CloudFlare_Tag_Purge {
 	}
 
 	/**
-	 * Purge the cache for the updated/published post and all the pages it appears on.
-	 *
-	 * @return void
-	 */
-	public function execute_tag_purge(): void {
-		$this->get_cache_tags();
-
-		if ( count( $this->tags ) === 0 ) {
-			$this->log( YOAST_CLOUDFLARE_LOG_STATUS_INFO, [
-				'purge'   => false,
-				'info'    => 'No tags found for post #' . $this->post->ID,
-				'post_id' => $this->post->ID
-			] );
-
-			return;
-		}
-
-		$loops = ceil( count( $this->tags ) / 30 ); // a maximum of 30 tags per API call
-		for ( $i = 0; $i <= $loops; $i ++ ) {
-			$api_tags = array_splice( $this->tags, ( $i * 30 ), 30 );
-
-			if ( \count( $api_tags ) === 0 ) {
-				continue;
-			}
-
-			$this->cloudflare_cache_clear( [ 'tags' => array_values( $api_tags ) ] );
-		}
-	}
-
-	/**
 	 * Do a cache purge on Cloudflare.
 	 *
 	 * @param array $payload The payload to send to Cloudflare.
@@ -264,6 +252,33 @@ class Yoast_CloudFlare_Tag_Purge {
 				$this->tags[] = $this->get_cache_prefix() . $tax . '-' . $taxonomy_details->slug;
 			}
 		}
+	}
+
+	/**
+	 * Checks whether we have all the needed Cloudflare config.
+	 *
+	 * @return bool
+	 */
+	private function check_settings(): bool {
+		if ( empty( $this->auth_key ) ) {
+			$this->log( YOAST_CLOUDFLARE_LOG_STATUS_INFO, [
+				'purge' => false,
+				'info'  => 'No CloudFlare key available.'
+			] );
+
+			return false;
+		}
+
+		if ( empty( $this->mail ) || empty( $this->zone_id ) ) {
+			$this->log( YOAST_CLOUDFLARE_LOG_STATUS_INFO, [
+				'purge' => false,
+				'info'  => 'No CloudFlare email or zone ID available.'
+			] );
+
+			return false;
+		}
+
+		return true;
 	}
 }
 
