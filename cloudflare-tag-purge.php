@@ -79,7 +79,10 @@ class Yoast_CloudFlare_Purge {
 	 *
 	 * @return void
 	 */
-	public function purge_action_edit_post( int $post_id, WP_Post $post ) {
+	public function purge_action_edit_post($post_id, $post ) {
+		if ( ! is_int( $post_id ) || ! is_a( $post, WP_Post::class ) ) {
+			return;
+		}
 		$this->execute_tag_purge( (int) $post_id, $post );
 	}
 
