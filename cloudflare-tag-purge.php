@@ -55,7 +55,7 @@ class Yoast_CloudFlare_Purge {
 			return;
 		}
 
-		add_action( 'plugin_loaded', [ $this, 'register_hooks' ] );
+		add_action( 'plugins_loaded', [ $this, 'register_hooks' ] );
 	}
 
 	/**
