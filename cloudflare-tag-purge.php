@@ -1,19 +1,9 @@
 <?php
+
 /**
- * Plugin Name: Cloudflare Tag Purge
- * Plugin URI: https://wordpress.org/plugins/cloudflare-yoast/
- * Description: Enables you to purge the cache by tags in Cloudflare (enterprise accounts only).
- * Author: Team Yoast
- * Version: 1.0.5
- * Author URI: https://wordpress.org/
- * Text Domain: cloudflare-tag-purge
+ * Class that executes a tag purge.
  */
-
-define( 'cloudflare_tag_purge_version', '1.0.5' );
-define( 'YOAST_CLOUDFLARE_LOG_STATUS_INFO', 'info' );
-define( 'YOAST_CLOUDFLARE_LOG_STATUS_PURGE', 'purge' );
-
-class Yoast_CloudFlare_Purge {
+class Yoast_CloudFlare_Tag_Purge {
 	/**
 	 * Authentication key.
 	 *
@@ -43,9 +33,17 @@ class Yoast_CloudFlare_Purge {
 	private $tags = [];
 
 	/**
+	 * The post we're clearing the cache for.
+	 *
+	 * @var WP_Post
+	 */
+	private $post;
+
+	/**
 	 * Class constructor.
 	 */
-	public function __construct() {
+	public function __construct( WP_Post $post ) {
+		$this->post     = $post;
 		$this->auth_key = $this->read_environment_setting( 'CF_KEY', null );
 		$this->mail     = $this->read_environment_setting( 'CF_EMAIL', null );
 		$this->zone_id  = $this->read_environment_setting( 'CF_ZONE_ID', null );
@@ -64,43 +62,8 @@ class Yoast_CloudFlare_Purge {
 				'purge' => false,
 				'info'  => 'No CloudFlare email or zone ID available.'
 			] );
-
-			return;
-		}
-
-		add_action( 'plugins_loaded', [ $this, 'register_hooks' ] );
-	}
-
-	/**
-	 * Register hooks.
-	 *
-	 * @return void
-	 */
-	public function register_hooks() {
-		if ( ! is_admin() ) {
-			add_filter( 'body_class', [ $this, 'cache_prefix_body_class' ], 40, 1 );
-		}
-
-		if ( is_admin() || wp_is_json_request() ) {
-			add_action( 'edit_post', [ $this, 'purge_action_edit_post' ], 10, 2 );
 		}
 	}
-
-	/**
-	 * Purge the post that has been published/updated and all related URLs.
-	 *
-	 * @param int     $post_id ID for the post that has been published/updated (unused).
-	 * @param WP_post $post    The post that has been published/updated.
-	 *
-	 * @return void
-	 */
-	public function purge_action_edit_post( $post_id, $post ): void {
-		if ( ! is_a( $post, WP_post::class ) ) {
-			return;
-		}
-		$this->execute_tag_purge( $post );
-	}
-
 
 	/**
 	 * Read from the system environment.
@@ -110,7 +73,7 @@ class Yoast_CloudFlare_Purge {
 	 *
 	 * @return string
 	 */
-	private function read_environment_setting( string $key, $default ): string {
+	private function read_environment_setting( string $key, string $default ): string {
 		if ( ! empty( getenv( $key ) ) ) {
 			return getenv( $key );
 		}
@@ -121,22 +84,20 @@ class Yoast_CloudFlare_Purge {
 	/**
 	 * Retrieve the cache tags we should be clearing.
 	 *
-	 * @param WP_post $post The post that has been published/updated.
-	 *
 	 * @return void
 	 */
-	private function get_cache_tags( WP_post $post ): void {
-		$this->tags = [ $this->get_cache_prefix() . 'postid-' . $post->ID ];
+	private function get_cache_tags(): void {
+		$this->tags = [ $this->get_cache_prefix() . 'postid-' . $this->post->ID ];
 
-		$this->add_author_page( $post );
-		$this->add_taxonomy_tags( $post );
+		$this->add_author_page( $this->post );
+		$this->add_taxonomy_tags( $this->post );
 
 		// Depending on the post type, clear the archive for that post type.
-		if ( $post->post_type === 'post' ) {
+		if ( $this->post->post_type === 'post' ) {
 			$this->tags[] = 'blog';
 		}
-		else if ( get_post_type_archive_link( $post->post_type ) !== false ) {
-			$this->tags[] = 'post-type-archive-' . $post->post_type;
+		else if ( get_post_type_archive_link( $this->post->post_type ) !== false ) {
+			$this->tags[] = 'post-type-archive-' . $this->post->post_type;
 		}
 
 		do_action_ref_array( 'yoast_cloudflare_purge_cache_tags', $this->tags );
@@ -216,18 +177,16 @@ class Yoast_CloudFlare_Purge {
 	/**
 	 * Purge the cache for the updated/published post and all the pages it appears on.
 	 *
-	 * @param \WP_post $post The post that has been published/updated.
-	 *
 	 * @return void
 	 */
-	private function execute_tag_purge( \WP_post $post ): void {
-		$this->get_cache_tags( $post );
+	public function execute_tag_purge(): void {
+		$this->get_cache_tags();
 
 		if ( count( $this->tags ) === 0 ) {
 			$this->log( YOAST_CLOUDFLARE_LOG_STATUS_INFO, [
 				'purge'   => false,
-				'info'    => 'No tags found for post #' . $post->ID,
-				'post_id' => $post->ID
+				'info'    => 'No tags found for post #' . $this->post->ID,
+				'post_id' => $this->post->ID
 			] );
 
 			return;
@@ -280,13 +239,11 @@ class Yoast_CloudFlare_Purge {
 	/**
 	 * Add the author page to the tags.
 	 *
-	 * @param WP_post $post
-	 *
 	 * @return void
 	 */
-	private function add_author_page( WP_post $post ): void {
-		if ( isset( $post->post_author ) && ! empty( $post->post_author ) ) {
-			$url = get_user_meta( $post->post_author, 'author_page_url', true );
+	private function add_author_page(): void {
+		if ( isset( $this->post->post_author ) && ! empty( $this->post->post_author ) ) {
+			$url = get_user_meta( $this->post->post_author, 'author_page_url', true );
 			if ( ! empty( $url ) ) {
 				$author_page_id = url_to_postid( $url );
 				$this->tags[]   = 'postid-' . $author_page_id;
@@ -297,14 +254,12 @@ class Yoast_CloudFlare_Purge {
 	/**
 	 * Add the cache tags for all taxonomies.
 	 *
-	 * @param WP_post $post
-	 *
 	 * @return void
 	 */
-	private function add_taxonomy_tags( WP_post $post ): void {
-		$taxonomies = get_object_taxonomies( $post->post_type );
+	private function add_taxonomy_tags(): void {
+		$taxonomies = get_object_taxonomies( $this->post->post_type );
 		foreach ( $taxonomies as $tax ) {
-			foreach ( wp_get_object_terms( $post->ID, $tax ) as $taxonomy_details ) {
+			foreach ( wp_get_object_terms( $this->post->ID, $tax ) as $taxonomy_details ) {
 				$this->tags[] = $this->get_cache_prefix() . $tax . '-' . $taxonomy_details->term_id;
 				$this->tags[] = $this->get_cache_prefix() . $tax . '-' . $taxonomy_details->slug;
 			}
