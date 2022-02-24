@@ -104,7 +104,7 @@ class Yoast_CloudFlare_Purge {
 	 * @return array|string[]
 	 */
 	function get_cache_tags_by_post_id( int $post_id ) {
-		$tags = [ $this->get_cache_prefix() . 'postid-' . (int) $post_id ];
+		$tags = [ $this->get_cache_prefix() . 'postid-' . $post_id ];
 		$post = get_post( $post_id );
 
 		if ( $post instanceof WP_Post ) {
