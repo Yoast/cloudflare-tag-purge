@@ -15,19 +15,32 @@ define( 'YOAST_CLOUDFLARE_LOG_STATUS_PURGE', 'purge' );
 
 class Yoast_CloudFlare_Purge {
 	/**
+	 * Authentication key.
+	 *
 	 * @var string
 	 */
 	private $auth_key;
 
 	/**
+	 * Email registered for the key at Cloudflare.
+	 *
 	 * @var string
 	 */
 	private $mail;
 
 	/**
+	 * Cloudflare zone we're in.
+	 *
 	 * @var string
 	 */
 	private $zone_id;
+
+	/**
+	 * The cache tags that be should cleared.
+	 *
+	 * @var string[]
+	 */
+	private $tags = [];
 
 	/**
 	 * Class constructor.
@@ -38,7 +51,7 @@ class Yoast_CloudFlare_Purge {
 		$this->zone_id  = $this->read_environment_setting( 'CF_ZONE_ID', null );
 
 		if ( empty( $this->auth_key ) ) {
-			$this->cache_tag_log( YOAST_CLOUDFLARE_LOG_STATUS_INFO, [
+			$this->log( YOAST_CLOUDFLARE_LOG_STATUS_INFO, [
 				'purge' => false,
 				'info'  => 'No CloudFlare key available.'
 			] );
@@ -47,7 +60,7 @@ class Yoast_CloudFlare_Purge {
 		}
 
 		if ( empty( $this->mail ) || empty( $this->zone_id ) ) {
-			$this->cache_tag_log( YOAST_CLOUDFLARE_LOG_STATUS_INFO, [
+			$this->log( YOAST_CLOUDFLARE_LOG_STATUS_INFO, [
 				'purge' => false,
 				'info'  => 'No CloudFlare email or zone ID available.'
 			] );
@@ -74,26 +87,30 @@ class Yoast_CloudFlare_Purge {
 	}
 
 	/**
-	 * @param int     $post_id
-	 * @param WP_Post $post
+	 * Purge the post that has been published/updated and all related URLs.
+	 *
+	 * @param int     $post_id ID for the post that has been published/updated (unused).
+	 * @param WP_post $post    The post that has been published/updated.
 	 *
 	 * @return void
 	 */
-	public function purge_action_edit_post($post_id, $post ) {
-		if ( ! is_int( $post_id ) || ! is_a( $post, WP_Post::class ) ) {
+	public function purge_action_edit_post( $post_id, $post ): void {
+		if ( ! is_a( $post, WP_post::class ) ) {
 			return;
 		}
-		$this->execute_tag_purge( (int) $post_id, $post );
+		$this->execute_tag_purge( $post );
 	}
 
 
 	/**
-	 * @param $key
-	 * @param $default
+	 * Read from the system environment.
 	 *
-	 * @return mixed
+	 * @param string $key     The key to read from the environment.
+	 * @param string $default The default if no value was  found.
+	 *
+	 * @return string
 	 */
-	private function read_environment_setting( $key, $default ) {
+	private function read_environment_setting( string $key, $default ): string {
 		if ( ! empty( getenv( $key ) ) ) {
 			return getenv( $key );
 		}
@@ -102,42 +119,38 @@ class Yoast_CloudFlare_Purge {
 	}
 
 	/**
-	 * @param int $post_id
+	 * Retrieve the cache tags we should be clearing.
 	 *
-	 * @return array|string[]
+	 * @param WP_post $post The post that has been published/updated.
+	 *
+	 * @return void
 	 */
-	function get_cache_tags_by_post_id( int $post_id ) {
-		$tags = [ $this->get_cache_prefix() . 'postid-' . $post_id ];
-		$post = get_post( $post_id );
+	private function get_cache_tags( WP_post $post ): void {
+		$this->tags = [ $this->get_cache_prefix() . 'postid-' . $post->ID ];
 
-		if ( $post instanceof WP_Post ) {
-			// add author page
-			if ( isset( $post->post_author ) && ! empty( $post->post_author ) ) {
-				$tags = array_merge( [ $this->get_cache_prefix() . 'author-' . $post->post_author ], $tags );
-			}
+		$this->add_author_page( $post );
+		$this->add_taxonomy_tags( $post );
 
-			$post_type  = get_post_type( $post->ID );
-			$taxonomies = get_object_taxonomies( $post_type );
-			foreach ( $taxonomies as $tax ) {
-				foreach ( wp_get_object_terms( $post->ID, $tax ) as $taxonomy_details ) {
-					$tags[] = $this->get_cache_prefix() . $tax . '-' . $taxonomy_details->term_id;
-					$tags[] = $this->get_cache_prefix() . $tax . '-' . $taxonomy_details->slug;
-				}
-			}
+		// Depending on the post type, clear the archive for that post type.
+		if ( $post->post_type === 'post' ) {
+			$this->tags[] = 'blog';
+		}
+		else if ( get_post_type_archive_link( $post->post_type ) !== false ) {
+			$this->tags[] = 'post-type-archive-' . $post->post_type;
 		}
 
-		do_action_ref_array( 'yoast_cloudflare_purge_cache_tags', $tags );
-
-		return $tags;
+		do_action_ref_array( 'yoast_cloudflare_purge_cache_tags', $this->tags );
 	}
 
 	/**
-	 * @return string|null
+	 * Prefix our cache tag with the environment.
+	 *
+	 * @return string
 	 */
-	private function get_cache_prefix() {
+	private function get_cache_prefix(): string {
 		if ( $this->read_environment_setting( 'DOMAIN_CURRENT_SITE', 'staging-local.yoast.com' ) === 'yoast.com' ) {
 			// on production: no prefixes are added for the tags
-			return null;
+			return '';
 		}
 
 		$prefix = str_replace( '.yoast.com', '', $this->read_environment_setting( 'DOMAIN_CURRENT_SITE', 'staging-local.yoast.com' ) );
@@ -146,12 +159,15 @@ class Yoast_CloudFlare_Purge {
 		return trim( strtolower( $prefix ) ) . '-';
 	}
 
-
 	/**
-	 * @param string $level
-	 * @param array  $data
+	 * Log an action.
+	 *
+	 * @param string $level Log level.
+	 * @param array  $data  The data to log.
+	 *
+	 * @return void
 	 */
-	private function cache_tag_log( string $level, array $data ) {
+	private function log( string $level, array $data ): void {
 		$log_location = $this->read_environment_setting( 'CF_LOG_PATH', null );
 		if ( $log_location === null ) {
 			error_log( 'Cloudflare log file path not configured (CF_LOG_PATH)' );
@@ -176,12 +192,14 @@ class Yoast_CloudFlare_Purge {
 	}
 
 	/**
-	 * @param $classes
+	 * Prefix the cache classes.
 	 *
-	 * @return mixed
+	 * @param array $classes
+	 *
+	 * @return array Array of classes.
 	 */
-	private function cache_prefix_body_class( $classes ) {
-		if ( $this->get_cache_prefix() === null ) {
+	private function cache_prefix_body_class( $classes ): array {
+		if ( $this->get_cache_prefix() === '' ) {
 			// return default classes, without prefix (production)
 			return $classes;
 		}
@@ -196,43 +214,28 @@ class Yoast_CloudFlare_Purge {
 	}
 
 	/**
-	 * Get the sitemap url, and flush by url
+	 * Purge the cache for the updated/published post and all the pages it appears on.
 	 *
-	 * @param int $post_id
+	 * @param \WP_post $post The post that has been published/updated.
 	 *
-	 * @return string
+	 * @return void
 	 */
-	private function get_sitemap_url( int $post_id ) {
-		$prefix    = get_site_url() . '/';
-		$post_type = get_post_type( $post_id );
+	private function execute_tag_purge( \WP_post $post ): void {
+		$this->get_cache_tags( $post );
 
-		if ( empty( $post_type ) ) {
-			return $prefix . 'sitemap_index.xml';
-		}
-
-		return $prefix . $post_type . '-sitemap.xml';
-	}
-
-	/**
-	 * @param int     $post_id
-	 * @param WP_Post $post
-	 */
-	private function execute_tag_purge( int $post_id, $post ) {
-		$tags = $this->get_cache_tags_by_post_id( $post_id );
-
-		if ( count( $tags ) === 0 ) {
-			$this->cache_tag_log( YOAST_CLOUDFLARE_LOG_STATUS_INFO, [
+		if ( count( $this->tags ) === 0 ) {
+			$this->log( YOAST_CLOUDFLARE_LOG_STATUS_INFO, [
 				'purge'   => false,
-				'info'    => 'No tags found for post #' . $post_id,
-				'post_id' => $post_id
+				'info'    => 'No tags found for post #' . $post->ID,
+				'post_id' => $post->ID
 			] );
 
 			return;
 		}
 
-		$loops = ceil( count( $tags ) / 30 ); // a maximum of 30 tags per API call
+		$loops = ceil( count( $this->tags ) / 30 ); // a maximum of 30 tags per API call
 		for ( $i = 0; $i <= $loops; $i ++ ) {
-			$api_tags = array_splice( $tags, ( $i * 30 ), 30 );
+			$api_tags = array_splice( $this->tags, ( $i * 30 ), 30 );
 
 			if ( \count( $api_tags ) === 0 ) {
 				continue;
@@ -240,21 +243,17 @@ class Yoast_CloudFlare_Purge {
 
 			$this->cloudflare_cache_clear( [ 'tags' => array_values( $api_tags ) ] );
 		}
-
-		$sitemap_url = $this->get_sitemap_url( (int) $post_id );
-
-		if ( ! empty( $sitemap_url ) ) {
-			$this->cloudflare_cache_clear( [ 'files' => [ $sitemap_url ] ] );
-		}
 	}
 
 	/**
-	 * @param array $payload
+	 * Do a cache purge on Cloudflare.
+	 *
+	 * @param array $payload The payload to send to Cloudflare.
 	 *
 	 * @return void
 	 */
 	private function cloudflare_cache_clear( array $payload ): void {
-		$this->cache_tag_log( YOAST_CLOUDFLARE_LOG_STATUS_PURGE, [
+		$this->log( YOAST_CLOUDFLARE_LOG_STATUS_PURGE, [
 				'purge'   => true,
 				'payload' => $payload,
 				'zone_id' => $this->zone_id,
@@ -276,6 +275,40 @@ class Yoast_CloudFlare_Purge {
 				] ),
 			]
 		);
+	}
+
+	/**
+	 * Add the author page to the tags.
+	 *
+	 * @param WP_post $post
+	 *
+	 * @return void
+	 */
+	private function add_author_page( WP_post $post ): void {
+		if ( isset( $post->post_author ) && ! empty( $post->post_author ) ) {
+			$url = get_user_meta( $post->post_author, 'author_page_url', true );
+			if ( ! empty( $url ) ) {
+				$author_page_id = url_to_postid( $url );
+				$this->tags[]   = 'postid-' . $author_page_id;
+			}
+		}
+	}
+
+	/**
+	 * Add the cache tags for all taxonomies.
+	 *
+	 * @param WP_post $post
+	 *
+	 * @return void
+	 */
+	private function add_taxonomy_tags( WP_post $post ): void {
+		$taxonomies = get_object_taxonomies( $post->post_type );
+		foreach ( $taxonomies as $tax ) {
+			foreach ( wp_get_object_terms( $post->ID, $tax ) as $taxonomy_details ) {
+				$this->tags[] = $this->get_cache_prefix() . $tax . '-' . $taxonomy_details->term_id;
+				$this->tags[] = $this->get_cache_prefix() . $tax . '-' . $taxonomy_details->slug;
+			}
+		}
 	}
 }
 
