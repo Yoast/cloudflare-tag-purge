@@ -113,6 +113,7 @@ class Yoast_CloudFlare_Tag_Purge {
 		// Depending on the post type, clear the archive for that post type.
 		if ( $this->post->post_type === 'post' ) {
 			$this->tags[] = 'blog';
+			$this->tags[] = 'home';
 		}
 		else if ( get_post_type_archive_link( $this->post->post_type ) !== false ) {
 			$this->tags[] = 'post-type-archive-' . $this->post->post_type;
